@@ -15,16 +15,20 @@ import numpy as np
 import cv2
 
 import requests
+from torchvision import transforms
 
-from maskrcnn_benchmark.config import cfg as cfg_caption
-from maskrcnn_benchmark.layers import nms
-from maskrcnn_benchmark.modeling.detector import build_detection_model
-from maskrcnn_benchmark.structures.image_list import to_image_list
-from maskrcnn_benchmark.utils.model_serialization import load_state_dict
+# from maskrcnn_benchmark.config import cfg as cfg_caption
+# from maskrcnn_benchmark.layers import nms
+# from maskrcnn_benchmark.modeling.detector import build_detection_model
+# from maskrcnn_benchmark.structures.image_list import to_image_list
+# from maskrcnn_benchmark.utils.model_serialization import load_state_dict
+# import captioning
+# import captioning.utils.misc
+# import captioning.models
 
-import captioning
-import captioning.utils.misc
-import captioning.models
+from transformers import BlipProcessor, BlipForConditionalGeneration
+
+
 # import spacy
 # spacy.prefer_gpu()
 # torch.set_default_tensor_type("torch.cuda.FloatTensor")
@@ -33,7 +37,7 @@ import captioning.models
 # class BERT_encoder:    
 #     def __init__(self):
 #         # self._init_processors()
-#         self.bert_model = spacy.load("en_trf_distilbertbaseuncased_lg")
+#         self.bert_model = spacy.load("en_trf_distilbergtbaseuncased_lg")
 #     def __call__(self, texts):
 #         docs = self.bert_model(texts)
 #         sentence_emb = docs.vector
@@ -42,127 +46,198 @@ import captioning.models
             
 
 ############################## Image Caption ########################################
-class FeatureExtractor:
-    TARGET_IMAGE_SIZE = [448, 448]
-    CHANNEL_MEAN = [0.485, 0.456, 0.406]
-    CHANNEL_STD = [0.229, 0.224, 0.225]
-    
-    def __init__(self):
-        # self._init_processors()
-        self.detection_model = self._build_detection_model()
-    
-    def __call__(self, url):
-        with torch.no_grad():
-            detectron_features = self.get_detectron_features(url)
-        
-        return detectron_features
-    
-    def _build_detection_model(self):
+# class FeatureExtractor:
+#     TARGET_IMAGE_SIZE = [448, 448]
+#     CHANNEL_MEAN = [0.485, 0.456, 0.406]
+#     CHANNEL_STD = [0.229, 0.224, 0.225]
+#
+#     def __init__(self):
+#         # self._init_processors()
+#         self.detection_model = self._build_detection_model()
+#
+#     def __call__(self, url):
+#         with torch.no_grad():
+#             detectron_features = self.get_detectron_features(url)
+#
+#         return detectron_features
+#
+#     def _build_detection_model(self):
+#         # Modification:
+#         # Load configuration for the Detectron model
+#         cfg_caption.merge_from_file('../models/image_caption_pretrained/feature_extraction/detectron_config.yaml')
+#         cfg_caption.freeze()
+#         model = build_detection_model(cfg_caption)
+#         # load the parameters
+#         checkpoint = torch.load('../models/image_caption_pretrained/feature_extraction/detectron_model.pth',
+#                                 map_location=torch.device("cpu"))
+#
+#         load_state_dict(model, checkpoint.pop("model"))
+#
+#         model.to("cuda")
+#         model.eval()
+#         return model
+#
+#     def get_actual_image(self, image_path):
+#         if image_path.startswith('http'):
+#             path = requests.get(image_path, stream=True).raw
+#         else:
+#             path = image_path
+#
+#         return path
+#
+#     def _image_transform(self, image):
+#         img = image.permute(1,2,0).cpu()
+#         im = np.array(img).astype(np.float32)
+#         im = im[:, :, ::-1]
+#         im -= np.array([102.9801, 115.9465, 122.7717])
+#         im_shape = im.shape
+#         im_size_min = np.min(im_shape[0:2])
+#         im_size_max = np.max(im_shape[0:2])
+#         im_scale = float(800) / float(im_size_min)
+#         # Prevent the biggest axis from being more than max_size
+#         if np.round(im_scale * im_size_max) > 1333:
+#             im_scale = float(1333) / float(im_size_max)
+#         im = cv2.resize(
+#             im,
+#             None,
+#             None,
+#             fx=im_scale,
+#             fy=im_scale,
+#             interpolation=cv2.INTER_LINEAR
+#         )
+#         img = torch.from_numpy(im).permute(2, 0, 1)
+#         return img, im_scale
+#
+#
+#     def _process_feature_extraction(self, output,
+#                                     im_scales,
+#                                     feat_name='fc6',
+#                                     conf_thresh=0.2):
+#         batch_size = len(output[0]["proposals"])
+#         n_boxes_per_image = [len(_) for _ in output[0]["proposals"]]
+#         # convert the raw scores of each proposal to probability
+#         score_list = output[0]["scores"].split(n_boxes_per_image)
+#         score_list = [torch.nn.functional.softmax(x, -1) for x in score_list]
+#         # fc6 layer features for each proposal are split according to the number of boxes per image.
+#         feats = output[0][feat_name].split(n_boxes_per_image)
+#         cur_device = score_list[0].device
+#
+#         feat_list = []
+#
+#         for i in range(batch_size):
+#             # adjusts the bounding box coordinates of the proposals for current image
+#             dets = output[0]["proposals"][i].bbox / im_scales[i]
+#             scores = score_list[i]
+#             # store the maximum confidence score for each proposal
+#             max_conf = torch.zeros((scores.shape[0])).to(cur_device)
+#             # goes through each class (excluding background class, hence starting from 1)
+#             for cls_ind in range(1, scores.shape[1]):
+#                 # Extract the scores for the current class and apply NMS to filter out overlapping bounding boxes.
+#                 cls_scores = scores[:, cls_ind]
+#                 keep = nms(dets, cls_scores, 0.5)
+#                 max_conf[keep] = torch.where(cls_scores[keep] > max_conf[keep],
+#                                             cls_scores[keep],
+#                                             max_conf[keep])
+#
+#             keep_boxes = torch.argsort(max_conf, descending=True)[:100]
+#             feat_list.append(feats[i][keep_boxes])
+#         return feat_list
+#
+#     def get_detectron_features(self, image):
+#         im, im_scale = self._image_transform(image)
+#         img_tensor, im_scales = [im], [im_scale]
+#         current_img_list = to_image_list(img_tensor, size_divisible=32)
+#         current_img_list = current_img_list.to('cuda')
+#         # disable the gradient backpropogation
+#         with torch.no_grad():
+#             output = self.detection_model(current_img_list)
+#         feat_list = self._process_feature_extraction(output, im_scales,
+#                                                     'fc6', 0.2)
+#         return feat_list[0]
 
-        cfg_caption.merge_from_file('../models/image_caption_pretrained/feature_extraction/detectron_config.yaml')
-        cfg_caption.freeze()
 
-        model = build_detection_model(cfg_caption)
-        checkpoint = torch.load('../models/image_caption_pretrained/feature_extraction/detectron_model.pth', 
-                                map_location=torch.device("cpu"))
-
-        load_state_dict(model, checkpoint.pop("model"))
-
-        model.to("cuda")
-        model.eval()
-        return model
-    
-    def get_actual_image(self, image_path):
-        if image_path.startswith('http'):
-            path = requests.get(image_path, stream=True).raw
-        else:
-            path = image_path
-        
-        return path
-
-    def _image_transform(self, image):
-        img = image.permute(1,2,0).cpu()
-        im = np.array(img).astype(np.float32)
-        im = im[:, :, ::-1]
-        im -= np.array([102.9801, 115.9465, 122.7717])
-        im_shape = im.shape
-        im_size_min = np.min(im_shape[0:2])
-        im_size_max = np.max(im_shape[0:2])
-        im_scale = float(800) / float(im_size_min)
-        # Prevent the biggest axis from being more than max_size
-        if np.round(im_scale * im_size_max) > 1333:
-            im_scale = float(1333) / float(im_size_max)
-        im = cv2.resize(
-            im,
-            None,
-            None,
-            fx=im_scale,
-            fy=im_scale,
-            interpolation=cv2.INTER_LINEAR
-        )
-        img = torch.from_numpy(im).permute(2, 0, 1)
-        return img, im_scale
+#Modification: image captioning model
+# class ImageCaption:
+#     def __init__(self):
+        # self.feature_extractor = FeatureExtractor()
+        # Modification: Load pre-trained model configurations and vocabulary.
+        # self.infos = captioning.utils.misc.pickle_load(open('../models/image_caption_pretrained/caption/infos_trans12-best.pkl', 'rb'))
+        # self.infos['opt'].vocab = self.infos['vocab']
+        # self.model = captioning.models.setup(self.infos['opt'])
+        # self.model.cuda()
+        # # Load the pre-trained weights into the model.
+        # self.model.load_state_dict(torch.load('../models/image_caption_pretrained/caption/model-best.pth'))
 
 
-    def _process_feature_extraction(self, output,
-                                    im_scales,
-                                    feat_name='fc6',
-                                    conf_thresh=0.2):
-        batch_size = len(output[0]["proposals"])
-        n_boxes_per_image = [len(_) for _ in output[0]["proposals"]]
-        score_list = output[0]["scores"].split(n_boxes_per_image)
-        score_list = [torch.nn.functional.softmax(x, -1) for x in score_list]
-        feats = output[0][feat_name].split(n_boxes_per_image)
-        cur_device = score_list[0].device
 
-        feat_list = []
+    # def __call__(self, img):
+    #     # Return the 5 captions from beam search with beam size 5
+    #     ret_list = []
+    #     for i in range(img.shape[0]):
+    #         img_feature = self.feature_extractor(img[i])
+    #         # Generate captions using the model. Beam search is used for better quality captions.
+    #         # The method `decode_sequence` decodes the generated captions into human-readable text.
+    #         ret_list.append(self.model.decode_sequence(self.model(img_feature.mean(0)[None], img_feature[None], mode='sample', opt={'beam_size':5, 'sample_method':'beam_search', 'sample_n':5})[0])[0])
+    #     return ret_list
+######################################################################################
 
-        for i in range(batch_size):
-            dets = output[0]["proposals"][i].bbox / im_scales[i]
-            scores = score_list[i]
-
-            max_conf = torch.zeros((scores.shape[0])).to(cur_device)
-
-            for cls_ind in range(1, scores.shape[1]):
-                cls_scores = scores[:, cls_ind]
-                keep = nms(dets, cls_scores, 0.5)
-                max_conf[keep] = torch.where(cls_scores[keep] > max_conf[keep],
-                                            cls_scores[keep],
-                                            max_conf[keep])
-
-            keep_boxes = torch.argsort(max_conf, descending=True)[:100]
-            feat_list.append(feats[i][keep_boxes])
-        return feat_list
-        
-    def get_detectron_features(self, image):
-        im, im_scale = self._image_transform(image)
-        img_tensor, im_scales = [im], [im_scale]
-        current_img_list = to_image_list(img_tensor, size_divisible=32)
-        current_img_list = current_img_list.to('cuda')
-        with torch.no_grad():
-            output = self.detection_model(current_img_list)
-        feat_list = self._process_feature_extraction(output, im_scales, 
-                                                    'fc6', 0.2)
-        return feat_list[0]
-
+########################################## Image caption using BLIP #############################
 class ImageCaption:
-  
     def __init__(self):
-        self.feature_extractor = FeatureExtractor()
+        self.processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+        self.model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base").to("cuda")
 
-        self.infos = captioning.utils.misc.pickle_load(open('../models/image_caption_pretrained/caption/infos_trans12-best.pkl', 'rb'))
-        self.infos['opt'].vocab = self.infos['vocab']
-        self.model = captioning.models.setup(self.infos['opt'])
-        self.model.cuda()
-        self.model.load_state_dict(torch.load('../models/image_caption_pretrained/caption/model-best.pth'))
-    def __call__(self, img):
-        # Return the 5 captions from beam serach with beam size 5
+        # Load the fine-tuned model checkpoint
+        checkpoint = torch.load("D:/Study/fourthYear_second/FYP/using detectron 2/output/BLIP/_BLIP_epoch_1_batch_160.pth")
+        # print(checkpoint['model_state_dict'])
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+
+    #For batch of images
+    def __call__(self, imgs):
+        # Process and prepare the batch of images/ below two line not verified
+        normalized_imgs = [(img + 1.0) * 127.5 for img in imgs]
+        normalized_imgs = [img.cpu().detach().numpy().astype(np.uint8) for img in normalized_imgs]
+        inputs = self.processor(images=normalized_imgs, return_tensors="pt")
+        inputs = {k: v.to("cuda") for k, v in inputs.items()}
+
+        # Generate captions for the batch
         ret_list = []
-        for i in range(img.shape[0]):
-            img_feature = self.feature_extractor(img[i])
-            ret_list.append(self.model.decode_sequence(self.model(img_feature.mean(0)[None], img_feature[None], mode='sample', opt={'beam_size':5, 'sample_method':'beam_search', 'sample_n':5})[0])[0])
+        outputs = self.model.generate(**inputs, num_beams=3, max_length=18, min_length=5)
+        for output in outputs:
+            caption = self.processor.decode(output, skip_special_tokens=True)
+            ret_list.append(caption)
+
         return ret_list
-#####################################################################################
+
+    #Single image for testing purpose
+    # def __call__(self, img):
+    #     # Convert image to tensor
+    #     inputs = self.processor(images=img, return_tensors="pt").to("cuda")
+    #     # Generate captions for the batch
+    #     ret_list = []
+    #     outputs = self.model.generate(**inputs, num_beams=5, max_length=18, min_length=5)
+    #     print(outputs)
+    #     for output in outputs:
+    #         caption = self.processor.decode(output, skip_special_tokens=True)
+    #         ret_list.append(caption)
+    #
+    #     return ret_list
+
+# if __name__ == "__main__":
+#     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+#     print("Using device:", device)
+#
+#     # Load an image
+#     image_path = "C:/Users/jiadong/Desktop/1.png"
+#     image = Image.open(image_path).convert('RGB')
+#
+#     # Generate caption
+#     captioner = ImageCaption()
+#     caption = captioner(image)
+#     print("Generated Caption:", caption)
+
+
+
 class GLU(nn.Module):
     def __init__(self):
         super(GLU, self).__init__()
@@ -560,11 +635,13 @@ class GET_IMAGE_G(nn.Module):
 class G_NET(nn.Module):
     def __init__(self):
         super(G_NET, self).__init__()
-        ngf = cfg.GAN.GF_DIM
+        ngf = cfg.GAN.GF_DIM # 32
         nef = cfg.TEXT.EMBEDDING_DIM
         ncf = cfg.GAN.CONDITION_DIM
         self.ca_net = CA_NET()
 
+
+        # for higher resolution image generation, modify here
         if cfg.TREE.BRANCH_NUM > 0:
             self.h_net1 = INIT_STAGE_G(ngf * 16, ncf)
             self.img_net1 = GET_IMAGE_G(ngf)
@@ -578,16 +655,18 @@ class G_NET(nn.Module):
 
     def forward(self, z_code, sent_emb, word_embs, mask):
         """
-            :param z_code: batch x cfg.GAN.Z_DIM
+            :param z_code: batch x cfg.GAN.Z_DIM, a latent noise vector
             :param sent_emb: batch x cfg.TEXT.EMBEDDING_DIM
             :param word_embs: batch x cdf x seq_len
             :param mask: batch x seq_len
             :return:
         """
-        fake_imgs = []
+        fake_imgs = [] # List to store generated images at different stages
         att_maps = []
+        # Conditioning Augmentation using VAE to get variance and mean of samples and return a sampled instance for generalization
         c_code, mu, logvar = self.ca_net(sent_emb)
 
+        # for higher resolution image generation, modify here
         if cfg.TREE.BRANCH_NUM > 0:
             h_code1 = self.h_net1(z_code, c_code)
             fake_img1 = self.img_net1(h_code1)
@@ -729,9 +808,9 @@ class D_GET_LOGITS(nn.Module):
 class D_NET64(nn.Module):
     def __init__(self, b_jcu=True):
         super(D_NET64, self).__init__()
-        ndf = cfg.GAN.DF_DIM
-        nef = cfg.TEXT.EMBEDDING_DIM
-        self.img_code_s16 = encode_image_by_16times(ndf)
+        ndf = cfg.GAN.DF_DIM # 64
+        nef = cfg.TEXT.EMBEDDING_DIM # 768 for bert, 256 for lstm
+        self.img_code_s16 = encode_image_by_16times(ndf) # An encoder that reduces the image resolution by 16 times
         if b_jcu:
             self.UNCOND_DNET = D_GET_LOGITS(ndf, nef, bcondition=False)
         else:
@@ -739,6 +818,7 @@ class D_NET64(nn.Module):
         self.COND_DNET = D_GET_LOGITS(ndf, nef, bcondition=True)
 
     def forward(self, x_var):
+        # Encode the input image and reduce its dimensionality
         x_code4 = self.img_code_s16(x_var)  # 4 x 4 x 8df
         return x_code4
 

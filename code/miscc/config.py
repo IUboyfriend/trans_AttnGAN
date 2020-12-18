@@ -15,7 +15,7 @@ __C.CONFIG_NAME = ''
 __C.DATA_DIR = ''
 __C.GPU_ID = 0
 __C.CUDA = True
-__C.WORKERS = 6
+__C.WORKERS = 4
 
 __C.RNN_TYPE = 'LSTM'   # 'GRU'
 __C.B_VALIDATION = False
@@ -27,7 +27,7 @@ __C.TREE.BASE_SIZE = 64
 
 # Training options
 __C.TRAIN = edict()
-__C.TRAIN.BATCH_SIZE = 64
+__C.TRAIN.BATCH_SIZE = 64 #3 for training BLIP
 __C.TRAIN.MAX_EPOCH = 600
 __C.TRAIN.SNAPSHOT_INTERVAL = 2000
 __C.TRAIN.DISCRIMINATOR_LR = 2e-4
@@ -101,6 +101,6 @@ def cfg_from_file(filename):
     """Load a config file and merge it into the default options."""
     import yaml
     with open(filename, 'r') as f:
-        yaml_cfg = edict(yaml.load(f))
+        yaml_cfg = edict(yaml.load(f, Loader=yaml.FullLoader))
 
     _merge_a_into_b(yaml_cfg, __C)

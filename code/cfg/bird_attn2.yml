@@ -12,10 +12,10 @@ TREE:
 
 TRAIN:
     FLAG: True
-    NET_G: ''  # '../models/bird_AttnGAN2.pth'
+    NET_G: '../models/netG_epoch_5.pth'  # '../models/bird_AttnGAN2.pth'
     B_NET_D: True
-    BATCH_SIZE: 2  # 22
-    MAX_EPOCH: 1
+    BATCH_SIZE: 16  # 22
+    MAX_EPOCH: 600
     SNAPSHOT_INTERVAL: 50
     DISCRIMINATOR_LR: 0.0002
     GENERATOR_LR: 0.0002

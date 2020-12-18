@@ -2,11 +2,7 @@ import cv2
 import torch
 import requests
 import numpy as np
-
-
-
 from PIL import Image
-
 
 from maskrcnn_benchmark.config import cfg
 from maskrcnn_benchmark.layers import nms

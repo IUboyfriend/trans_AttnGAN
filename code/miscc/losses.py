@@ -5,6 +5,7 @@ import numpy as np
 from miscc.config import cfg
 
 from GlobalAttention import func_attention
+from transformers import BertTokenizer
 
 
 # ##################Loss for matching text-image###################
@@ -29,7 +30,8 @@ def sent_loss(cnn_code, rnn_code, labels, class_ids,
             masks.append(mask.reshape((1, -1)))
         masks = np.concatenate(masks, 0)
         # masks: batch_size x batch_size
-        masks = torch.ByteTensor(masks)
+        # masks = torch.ByteTensor(masks)
+        masks = torch.BoolTensor(masks)  # Changed from torch.ByteTensor(masks)
         if cfg.CUDA:
             masks = masks.cuda()
 
@@ -116,7 +118,9 @@ def words_loss(img_features, words_emb, labels,
     if class_ids is not None:
         masks = np.concatenate(masks, 0)
         # masks: batch_size x batch_size
-        masks = torch.ByteTensor(masks)
+
+        # masks = torch.ByteTensor(masks)
+        masks = torch.BoolTensor(masks)  # Changed from torch.ByteTensor(masks)
         if cfg.CUDA:
             masks = masks.cuda()
 
@@ -140,6 +144,7 @@ def sent_loss_bert(pred, target, labels, class_ids,
         return nn.MSELoss()(pred, target)
 
 
+
 def words_loss_bert(pred, target, labels,
                cap_lens, class_ids, batch_size):
     """
@@ -147,8 +152,10 @@ def words_loss_bert(pred, target, labels,
         img_features(context): batch x nef x 17 x 17
     """
     if labels is not None:
+        # Predicted word embeddings and targeted word embeddings
         max_sent_len=max(pred.shape[2],target.shape[2])
         min_sent_len=min(pred.shape[2],target.shape[2])
+        # Padding for Alignment
         pad = torch.zeros_like(torch.empty(pred.shape[0],pred.shape[1],max_sent_len - min_sent_len)).cuda()
         if pred.shape[2]<max_sent_len:
             pred = torch.cat((pred,pad),2)
@@ -235,17 +242,21 @@ def generator_loss(netsD, image_encoder, fake_imgs, real_labels,
 
 def generator_loss_bert(netsD, image_caption, text_encoder, fake_imgs, real_labels,
                    words_embs, sent_emb, match_labels,
-                   cap_lens, class_ids):
+                   cap_lens, class_ids, first_iteration):
     numDs = len(netsD)
     batch_size = real_labels.size(0)
     logs = ''
     # Forward
     errG_total = 0
+
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     for i in range(numDs):
         features = netsD[i](fake_imgs[i])
+        # Compute the conditional logits using the discriminator's conditional network
         cond_logits = netsD[i].COND_DNET(features, sent_emb)
+        # Compute the conditional loss using binary cross-entropy loss
         cond_errG = nn.BCELoss()(cond_logits, real_labels)
-        if netsD[i].UNCOND_DNET is  not None:
+        if netsD[i].UNCOND_DNET is not None:
             logits = netsD[i].UNCOND_DNET(features)
             errG = nn.BCELoss()(logits, real_labels)
             g_loss = errG + cond_errG
@@ -255,23 +266,50 @@ def generator_loss_bert(netsD, image_caption, text_encoder, fake_imgs, real_labe
         # err_img = errG_total.data[0]
         logs += 'g_loss%d: %.2f ' % (i, g_loss.item())
 
-        # Ranking loss
+        # Innovation part: text-image matching loss
+        # Modification, only for the last image
         if i == (numDs - 1):
             # words_features: batch_size x nef x 17 x 17
             # sent_code: batch_size x nef
-            embs = list(text_encoder.pipe(image_caption(fake_imgs[i])))
 
-            pred_sent_emb = torch.Tensor(np.array([i.vector for i in embs])).cuda()
-            max_sent_len = max(1,len(max(embs,key=len)))
-            pred_words_embs=[]
-            for i in embs:
-                pred_word_emb = [w.vector for w in i]
-                sent_len =  len(i)
-                if sent_len<max_sent_len:
-                    pred_word_emb+=[[0]*len(i[0].vector)]*(max_sent_len-sent_len)
-                pred_words_embs.append(pred_word_emb)
-            pred_words_embs = torch.Tensor(np.array(pred_words_embs)).cuda()
-            pred_words_embs = pred_words_embs.permute(0,2,1)
+            # Modification
+            # embs = list(text_encoder.pipe(image_caption(fake_imgs[i])))
+            #
+            # pred_sent_emb = torch.Tensor(np.array([i.vector for i in embs])).cuda()
+            # max_sent_len = max(1,len(max(embs,key=len)))
+            # pred_words_embs=[]
+            # for i in embs:
+            #     pred_word_emb = [w.vector for w in i]
+            #     sent_len =  len(i)
+            #     if sent_len<max_sent_len:
+            #         pred_word_emb+=[[0]*len(i[0].vector)]*(max_sent_len-sent_len)
+            #     pred_words_embs.append(pred_word_emb)
+            # pred_words_embs = torch.Tensor(np.array(pred_words_embs)).cuda()
+            # pred_words_embs = pred_words_embs.permute(0,2,1)
+
+
+            tokenized_inputs = tokenizer(
+                image_caption(fake_imgs[i]),
+                padding=True,  # Pad to the longest sequence in the batch
+                truncation=True,  # Truncate to max length of the model
+                return_tensors='pt'  # Return PyTorch tensors
+            )
+            # Forward pass through the BERT model
+            with torch.no_grad():
+                outputs = text_encoder(**tokenized_inputs)
+
+            last_hidden_states = outputs.last_hidden_state
+
+            # sentence feature vectors
+            pred_sent_emb = last_hidden_states[:, 0, :].cuda()  # Shape: (batch_size, hidden_size)
+
+            pred_words_embs = last_hidden_states[:, 1:,:].cuda()  # Shape: (batch_size, sequence_length, hidden_size = 768)
+            pred_words_embs = pred_words_embs.permute(0, 2, 1)  # Shape: (batch_size, hidden_size = 768, sequence_length)
+            # if first_iteration == True:
+            #     print('word embeddings when loss: ', words_embs.shape)
+            #     print(words_embs[0, :, 0])
+            #     print('sentence embeddings when loss:', sent_emb.shape)
+            #     print(sent_emb[0])
 
 
             w_loss  = words_loss_bert(pred_words_embs, words_embs,

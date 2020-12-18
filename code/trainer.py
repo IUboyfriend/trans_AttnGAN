@@ -1,4 +1,8 @@
 from __future__ import print_function
+
+import datetime
+
+import dateutil
 from six.moves import range
 
 import torch
@@ -8,6 +12,7 @@ from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 
 from PIL import Image
+from transformers import BertTokenizer, BertModel
 
 from miscc.config import cfg
 from miscc.utils import mkdir_p
@@ -29,6 +34,8 @@ import spacy
 #     spacy.prefer_gpu()
     # torch.set_default_tensor_type("torch.cuda.FloatTensor")
 
+
+
 # ################# Text to image task############################ #
 class condGANTrainer(object):
     def __init__(self, output_dir, data_loader, n_words, ixtoword):
@@ -44,27 +51,33 @@ class condGANTrainer(object):
         self.batch_size = cfg.TRAIN.BATCH_SIZE
         self.max_epoch = cfg.TRAIN.MAX_EPOCH
         self.snapshot_interval = cfg.TRAIN.SNAPSHOT_INTERVAL
-
         self.n_words = n_words
         self.ixtoword = ixtoword
         self.data_loader = data_loader
         self.num_batches = len(self.data_loader)
 
+    # build encoders and generator and discriminators, load parameters if any
     def build_models(self):
         # ###################encoders######################################## #
         if cfg.TRAIN.USE_BERT:
-            print('Using BERT and COCO image captions')
-            text_encoder = spacy.load("en_trf_distilbertbaseuncased_lg")
-            image_caption = ImageCaption() 
+            print('Using BERT and image captioning')
+
+            # Modification
+            # text_encoder = spacy.load("en_trf_distilbertbaseuncased_lg")
+            text_encoder = BertModel.from_pretrained("bert-base-uncased")
+            image_caption = ImageCaption() # should be changed to BLIP
         else:
             image_encoder = CNN_ENCODER(cfg.TEXT.EMBEDDING_DIM)
             img_encoder_path = cfg.TRAIN.NET_E.replace('text_encoder', 'image_encoder')
+            # load the pre-trained weights
             state_dict = \
                 torch.load(img_encoder_path, map_location=lambda storage, loc: storage)
             image_encoder.load_state_dict(state_dict)
+
             for p in image_encoder.parameters():
                 p.requires_grad = False
             print('Load image encoder from:', img_encoder_path)
+            # After pretraining DAMSM, fix the text and image encoder
             image_encoder.eval()
 
             text_encoder = \
@@ -100,13 +113,14 @@ class condGANTrainer(object):
             if cfg.TREE.BRANCH_NUM > 2:
                 netsD.append(D_NET256())
             # TODO: if cfg.TREE.BRANCH_NUM > 3:
+
         netG.apply(weights_init)
         # print(netG)
         for i in range(len(netsD)):
             netsD[i].apply(weights_init)
             # print(netsD[i])
         print('# of netsD', len(netsD))
-        #
+        # Load the parameters of generator and discriminator if any
         epoch = 0
         if cfg.TRAIN.NET_G != '':
             state_dict = \
@@ -127,6 +141,8 @@ class condGANTrainer(object):
                         torch.load(Dname, map_location=lambda storage, loc: storage)
                     netsD[i].load_state_dict(state_dict)
         # ########################################################### #
+
+        # No need to modify
         if cfg.CUDA: 
             if not cfg.TRAIN.USE_BERT:
                 text_encoder = text_encoder.cuda()
@@ -224,7 +240,8 @@ class condGANTrainer(object):
             fullpath = '%s/D_%s_%d.png'\
                 % (self.image_dir, name, gen_iterations)
             im.save(fullpath)
-        
+
+
     def save_img_results_bert(self, netG, noise, sent_emb, words_embs, mask,
                          image_caption, captions, cap_lens,
                          gen_iterations, name='current'):
@@ -248,29 +265,35 @@ class condGANTrainer(object):
                     % (self.image_dir, name, gen_iterations, i)
                 im.save(fullpath)
         
-        
+
 
     def train(self):
+        # no need to modify
         if cfg.TRAIN.USE_BERT:
             text_encoder, image_caption, netG, netsD, start_epoch = self.build_models()
+            # print("################Finish building the models########################\n")
         else:
             text_encoder, image_encoder, netG, netsD, start_epoch = self.build_models()
+        # Copy parameters of the generator for averaging
         avg_param_G = copy_G_params(netG)
         optimizerG, optimizersD = self.define_optimizers(netG, netsD)
         real_labels, fake_labels, match_labels = self.prepare_labels()
 
         batch_size = self.batch_size
-        nz = cfg.GAN.Z_DIM
+        nz = cfg.GAN.Z_DIM  # The dimensionality of the latent (noise) vector.
         noise = Variable(torch.FloatTensor(batch_size, nz))
         fixed_noise = Variable(torch.FloatTensor(batch_size, nz).normal_(0, 1))
         if cfg.CUDA:
             noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
 
         gen_iterations = 0
+
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+
         # gen_iterations = start_epoch * self.num_batches
         for epoch in tqdm(range(start_epoch, self.max_epoch)):
             start_t = time.time()
-
+            # for each batch of data
             data_iter = iter(self.data_loader)
             step = 0
             while step < self.num_batches:
@@ -278,10 +301,13 @@ class condGANTrainer(object):
                 # self.set_requires_grad_value(netsD, True)
 
                 ######################################################
-                # (1) Prepare training data and Compute text embeddings
+                # (1) Prepare training data, Generate the word and sentence embeddings
                 ######################################################
-                data = data_iter.next()
+                data = next(iter(self.data_loader))
                 imgs, captions, cap_lens, class_ids, keys = prepare_data(data)
+                print(f"Processing batch number: {step + 1}/{self.num_batches}, epoch: {epoch}\n")
+
+
                 if cfg.TRAIN.USE_BERT:
                     sentence_list = []
                     for i in range(cfg.TRAIN.BATCH_SIZE):
@@ -294,28 +320,71 @@ class condGANTrainer(object):
                             sentence.append(word)
                         sentence=" ".join(sentence)
                         sentence_list.append(sentence)
-                    embs =  list(text_encoder.pipe(sentence_list))
-                    sent_emb = torch.Tensor([i.vector for i in embs]).cuda()
-                    max_sent_len = max(1,len(max(embs,key=len)))
-                    words_embs=[]
-                    for i in embs:
-                        word_emb = [w.vector for w in i]
-                        sent_len =  len(i)
-                        if sent_len<max_sent_len:
-                            word_emb+=[[0]*len(i[0].vector)]*(max_sent_len-sent_len)
-                        words_embs.append(word_emb)
-                    # print(len(words_embs),len(words_embs[0]),len(words_embs[0][0]))
-                    words_embs = torch.Tensor(words_embs).cuda()
-                        
-                    words_embs = words_embs.permute(0,2,1)
+
+                    # print("Number of sentences in each batch:", len(sentence_list))
+                    # print(sentence_list)
+
+                    # Modification
+                    # # generate 'Doc' object represent the generated text embeddings using bert, supported now
+                    # embs =  list(text_encoder.pipe(sentence_list))
+                    # # sentence vector using ".vector": average of the embeddings of the individual tokens in each sentence
+                    # sent_emb = torch.Tensor([i.vector for i in embs]).cuda()
+                    # max_sent_len = max(1,len(max(embs,key=len)))
+                    # words_embs=[]
+                    # # If the sentence is shorter than the longest sentence in the batch,
+                    # # pad the word embeddings with zeros to match the length of the longest sentence
+                    # for i in embs:
+                    #     word_emb = [w.vector for w in i]
+                    #     sent_len =  len(i)
+                    #     if sent_len<max_sent_len:
+                    #         word_emb+=[[0]*len(i[0].vector)]*(max_sent_len-sent_len)
+                    #     words_embs.append(word_emb)
+                    # # print(len(words_embs),len(words_embs[0]),len(words_embs[0][0]))
+                    # words_embs = torch.Tensor(words_embs).cuda()
+                    # # Change from (batch_size x num_words x embedding_dim) to (batch_size x embedding_dim x num_words)
+                    # words_embs = words_embs.permute(0,2,1)
+                    #######################################################################################
+
+                    tokenized_inputs = tokenizer(
+                        sentence_list,
+                        padding=True,  # Pad to the longest sequence in the batch
+                        truncation=True,  # Truncate to max length of the model
+                        return_tensors='pt'  # Return PyTorch tensors
+                    )
+                    # Forward pass through the BERT model
+                    with torch.no_grad():
+                        outputs = text_encoder(**tokenized_inputs)
+
+                    last_hidden_states = outputs.last_hidden_state  # you should use only 1: length word features, excluding CLS
+
+                    # sentence feature vectors
+                    sent_emb = last_hidden_states[:, 0, :].cuda()  # Shape: (batch_size, hidden_size)
+
+                    words_embs = last_hidden_states[:, 1:, :].cuda()  # Shape: (batch_size, sequence_length, hidden_size = 768)
+                    words_embs = words_embs.permute(0, 2, 1) # Shape: (batch_size, hidden_size = 768, sequence_length)
+
+                    # if(gen_iterations == 0):
+                    #     print('word embeddings: ', words_embs.shape)
+                    #     print(words_embs[7,:,2])
+                    #     print('sentence embeddings:', sent_emb.shape)
+                    #     print(sent_emb[7])
+
+                    # print("######Finish using Bert to generate the words and sentence vectors of the current batch#####\n")
+
+
                 else:
                     hidden = text_encoder.init_hidden(batch_size)
                     # words_embs: batch_size x nef x seq_len
                     # sent_emb: batch_size x nef
                     words_embs, sent_emb = text_encoder(captions, cap_lens, hidden) #RNN_ENCODER [14,256,12] [14,256]
+
+                # prevent gradients being calculated for these embeddings
                 words_embs, sent_emb = words_embs.detach(), sent_emb.detach()
+                # identify padding parts of the text data
                 mask = (captions == 0)
+                # number of words (including padding)
                 num_words = words_embs.size(2)
+
                 if mask.size(1) > num_words:
                     mask = mask[:, :num_words]
 
@@ -323,7 +392,11 @@ class condGANTrainer(object):
                 # (2) Generate fake images
                 ######################################################
                 noise.data.normal_(0, 1)
+                # fake_imgs: A list of generated images at different resolutions,
+                # mu,logvar: conditioning augmentation
                 fake_imgs, _, mu, logvar = netG(noise, sent_emb, words_embs, mask)
+
+                # print("###############Finish generating fake images#############")
 
                 #######################################################
                 # (3) Update D network
@@ -340,37 +413,66 @@ class condGANTrainer(object):
                     errD_total += errD
                     D_logs += 'errD%d: %.2f ' % (i, errD.item())
 
+                # print("###############Finish updating D network#############")
                 #######################################################
                 # (4) Update G network: maximize log(D(G(z)))
                 ######################################################
                 # compute total loss for training G
-                step += 1
-                gen_iterations += 1
+                step += 1 # num of batches in this epoch
+                gen_iterations += 1 # num of batches in throughout previous epochs
 
                 # do not need to compute gradient for Ds
                 # self.set_requires_grad_value(netsD, False)
                 netG.zero_grad()
+
+                # Modification
                 if cfg.TRAIN.USE_BERT:
+                    first_iteration = False
+                    if(gen_iterations == 0):
+                        first_iteration = True
                     errG_total, G_logs = \
                         generator_loss_bert(netsD, image_caption, text_encoder, fake_imgs, real_labels,
-                                    words_embs, sent_emb, match_labels, cap_lens, class_ids)
+                                    words_embs, sent_emb, match_labels, cap_lens, class_ids,first_iteration)
+
+                    # print("###############Finish calculating generator loss#############")
+
                 else:
                     errG_total, G_logs = \
                     generator_loss(netsD, image_encoder, fake_imgs, real_labels,
                                 words_embs, sent_emb, match_labels, cap_lens, class_ids)
+                # variational autoencoders to enforce a Gaussian distribution in the latent space
                 kl_loss = KL_loss(mu, logvar)
-                errG_total += kl_loss
+                errG_total += kl_loss # kl loss and generator losses
                 G_logs += 'kl_loss: %.2f ' % kl_loss.item()
+                # print("###############Finish calculate KL_LOSS#############")
+
                 # backward and update parameters
                 errG_total.backward()
                 optimizerG.step()
                 for p, avg_p in zip(netG.parameters(), avg_param_G):
                     avg_p.mul_(0.999).add_(0.001, p.data)
 
-                if gen_iterations % 100 == 0:
+                if gen_iterations % 20 == 0:
                     print(D_logs + '\n' + G_logs)
+                #
+                # print("###############Finish updating the generator#############")
+
                 # save images
-                if gen_iterations % 1000 == 0:
+                if gen_iterations % 50 == 0:
+                    print("save model and image!")
+
+                    now = datetime.datetime.now(dateutil.tz.tzlocal())
+                    timestamp = now.strftime('%Y_%m_%d_%H_%M_%S')
+                    output_dir = '../output/%s_%s_%s' % \
+                                 (cfg.DATASET_NAME, cfg.CONFIG_NAME, timestamp)
+                    self.model_dir = os.path.join(output_dir, 'Model')
+                    self.image_dir = os.path.join(output_dir, 'Image')
+                    mkdir_p(self.model_dir)
+                    mkdir_p(self.image_dir)
+
+
+
+                    self.save_model(netG, avg_param_G, netsD, epoch)
                     backup_para = copy_G_params(netG)
                     load_params(netG, avg_param_G)
                     if cfg.TRAIN.USE_BERT:
@@ -395,8 +497,8 @@ class condGANTrainer(object):
                     errD_total.item(), errG_total.item(),
                     end_t - start_t))
 
-            if epoch % cfg.TRAIN.SNAPSHOT_INTERVAL == 0:  # and epoch != 0:
-                self.save_model(netG, avg_param_G, netsD, epoch)
+            # if epoch % cfg.TRAIN.SNAPSHOT_INTERVAL == 0:  # and epoch != 0:
+            #     self.save_model(netG, avg_param_G, netsD, epoch)
 
         self.save_model(netG, avg_param_G, netsD, self.max_epoch)
 

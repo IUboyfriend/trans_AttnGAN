@@ -54,30 +54,35 @@ def build_super_images(real_imgs, captions, ixtoword,
                        attn_maps, att_sze, lr_imgs=None,
                        batch_size=cfg.TRAIN.BATCH_SIZE,
                        max_word_num=cfg.TEXT.WORDS_NUM):
-    nvis = 8
-    real_imgs = real_imgs[:nvis]
+    nvis = 8 # Number of images to visualize
+    real_imgs = real_imgs[:nvis] # during training is the fake image
     if lr_imgs is not None:
-        lr_imgs = lr_imgs[:nvis]
+        lr_imgs = lr_imgs[:nvis] # lower resolution image
     if att_sze == 17:
         vis_size = att_sze * 16
     else:
         vis_size = real_imgs.size(2)
 
+    # Create a canvas for text display
     text_convas = \
         np.ones([batch_size * FONT_MAX,
                  (max_word_num + 2) * (vis_size + 2), 3],
                 dtype=np.uint8)
 
+    # Set specific color blocks in the text canvas
     for i in range(max_word_num):
         istart = (i + 2) * (vis_size + 2)
         iend = (i + 3) * (vis_size + 2)
         text_convas[:, istart:iend, :] = COLOR_DIC[i]
 
-
+    #resize
     real_imgs = \
         nn.functional.interpolate(real_imgs,size=(vis_size, vis_size),
                                   mode='bilinear', align_corners=False)
     # [-1, 1] --> [0, 1]
+
+
+
     real_imgs.add_(1).div_(2).mul_(255)
     real_imgs = real_imgs.data.numpy()
     # b x c x h x w --> b x h x w x c
@@ -133,8 +138,8 @@ def build_super_images(real_imgs, captions, ixtoword,
                 if (vis_size // att_sze) > 1:
                     one_map = \
                         skimage.transform.pyramid_expand(one_map, sigma=20,
-                                                        upscale=vis_size // att_sze,
-                                                        multichannel=True)
+                                                        upscale=vis_size // att_sze,channel_axis=-1)
+                                                        #multichannel=True
                 row_beforeNorm.append(one_map)
                 minV = one_map.min()
                 maxV = one_map.max()
@@ -242,8 +247,8 @@ def build_super_images2(real_imgs, captions, cap_lens, ixtoword,
             if (vis_size // att_sze) > 1:
                 one_map = \
                     skimage.transform.pyramid_expand(one_map, sigma=20,
-                                                     upscale=vis_size // att_sze,
-                                                     multichannel=True)
+                                                     upscale=vis_size // att_sze
+                                                     ,channel_axis=-1)#multichannel=True
             minV = one_map.min()
             maxV = one_map.max()
             one_map = (one_map - minV) / (maxV - minV)
