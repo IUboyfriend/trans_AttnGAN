@@ -5,33 +5,15 @@ from torch.autograd import Variable
 from torchvision import models
 import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
-from PIL import Image
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from miscc.config import cfg
 from GlobalAttention import GlobalAttentionGeneral as ATT_NET
 
 import numpy as np
-import cv2
-
-import requests
-from torchvision import transforms
-
-# from maskrcnn_benchmark.config import cfg as cfg_caption
-# from maskrcnn_benchmark.layers import nms
-# from maskrcnn_benchmark.modeling.detector import build_detection_model
-# from maskrcnn_benchmark.structures.image_list import to_image_list
-# from maskrcnn_benchmark.utils.model_serialization import load_state_dict
-# import captioning
-# import captioning.utils.misc
-# import captioning.models
-
 from transformers import BlipProcessor, BlipForConditionalGeneration
 
 
-# import spacy
-# spacy.prefer_gpu()
-# torch.set_default_tensor_type("torch.cuda.FloatTensor")
 ############################## Bert ##################################################
 
 # class BERT_encoder:    

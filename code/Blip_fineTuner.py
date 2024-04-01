@@ -1,24 +1,17 @@
-import torch
-import torchvision.transforms as transforms
-from torch.optim.lr_scheduler import StepLR
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-from transformers import BlipProcessor, BlipForConditionalGeneration
 
 from torch.utils.data import DataLoader
-import torch
+
+from transformers import BlipProcessor, BlipForConditionalGeneration
+
+
 
 from miscc.config import cfg, cfg_from_file
 from datasets import TextDataset, prepare_data
-from trainer import condGANTrainer as trainer
 
 import os
 import sys
 import random
-import pprint
-import datetime
-import dateutil.tz
-import argparse
+
 import numpy as np
 import time
 
@@ -27,8 +20,7 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 # os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 import torch
 import torchvision.transforms as transforms
-from main import parse_args
-import spacy
+
 dir_path = (os.path.abspath(os.path.join(os.path.realpath(__file__), './.')))
 sys.path.append(dir_path)
 from transformers import AutoProcessor, BlipForConditionalGeneration
