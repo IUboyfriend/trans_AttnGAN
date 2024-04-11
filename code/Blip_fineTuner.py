@@ -7,7 +7,7 @@ from transformers import BlipProcessor, BlipForConditionalGeneration
 
 from miscc.config import cfg, cfg_from_file
 from datasets import TextDataset, prepare_data
-
+import torch.nn as nn
 import os
 import sys
 import random
@@ -128,9 +128,9 @@ class Blip_fineTuner:
 
 
     def getCaption(self, imgs):
-        random.seed(130)
-        np.random.seed(130)
-        torch.manual_seed(130)
+        random.seed(120)
+        np.random.seed(120)
+        torch.manual_seed(120)
         if cfg.CUDA:
             torch.cuda.manual_seed_all(130)
 
@@ -162,13 +162,13 @@ class Blip_fineTuner:
 
         # Generate captions for the batch
         ret_list = []
-        outputs = self.model.generate(**inputs, num_beams=3, max_length=18, min_length=5)
+        outputs = self.model.generate(**inputs,  max_length=18, min_length=5, num_beams = 3)#num_beams=5,
         for output in outputs:
             caption = self.processor.decode(output, skip_special_tokens=True)
             ret_list.append(caption)
         #
         # show_images(imgs[2], num_images=4)
-        show_images(normalized_imgs[2], num_images=3)
+        show_images(normalized_imgs[2], num_images=5)
         return ret_list, sentence_list
 if __name__ == '__main__':
 
@@ -179,7 +179,7 @@ if __name__ == '__main__':
         transforms.RandomCrop(imsize),
         transforms.RandomHorizontalFlip()])
 
-    dataset = TextDataset("D:/Study/fourthYear_second/FYP/using detectron 2/data/birds", 'test',
+    dataset = TextDataset("../data/birds", 'train',
                           base_size=cfg.TREE.BASE_SIZE,
                           transform=image_transform)
 
@@ -188,21 +188,21 @@ if __name__ == '__main__':
         dataset, batch_size= cfg.TRAIN.BATCH_SIZE,
         drop_last=True, shuffle=True, num_workers=int(cfg.WORKERS))  #
 
-    output_directory = "D:/Study/fourthYear_second/FYP/using detectron 2/output/BLIP"
+    output_directory = "../output/BLIP"
     fine_tuner = Blip_fineTuner(data_loader=dataloader, ixtoword=dataset.ixtoword, output_dir=output_directory)
-    # #
+
     # checkpoint = torch.load("D:/Study/fourthYear_second/FYP/using detectron 2/output/BLIP/_BLIP_epoch_1_batch_160.pth")
     # fine_tuner.model.load_state_dict(checkpoint['model_state_dict'])
-    # fine_tuner.train()
+    fine_tuner.train()
 
     #Load the fine-tuned model checkpoint
-    checkpoint = torch.load("D:/Study/fourthYear_second/FYP/using detectron 2/output/BLIP/_BLIP_epoch_1_batch_160.pth")
-    # print(checkpoint['model_state_dict'])
-    fine_tuner.model.load_state_dict(checkpoint['model_state_dict'])
-    captions, true_captions = fine_tuner.getCaption(dataloader)
-    print("Generated captions:\n" )
-    print(captions)
-    print("Real captions:\n" )
-    print( true_captions)
-    # print(checkpoint['loss'])
+    # checkpoint = torch.load("../output/BLIP_Result/lr=1e-6, more epochs/_BLIP_epoch_1_batch_400.pth")
+    # # print(checkpoint['model_state_dict'])
+    # fine_tuner.model.load_state_dict(checkpoint['model_state_dict'])
+    # captions, true_captions = fine_tuner.getCaption(dataloader)
+    # print("Generated captions:\n" )
+    # print(captions)
+    # print("Real captions:\n" )
+    # print( true_captions)
+    # # print(checkpoint['loss'])
 

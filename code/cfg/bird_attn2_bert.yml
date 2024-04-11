@@ -13,10 +13,10 @@ TREE:
 TRAIN:
     USE_BERT: True
     FLAG: True
-    NET_G: '../models/netG_epoch_5.pth'  # '../models/bird_AttnGAN2.pth'
+    NET_G: '../models/netG_epoch_1.pth'  # '../models/bird_AttnGAN2.pth'
     B_NET_D: True
     BATCH_SIZE: 16  # 8 / 16
-    MAX_EPOCH: 30 #50
+    MAX_EPOCH: 50 #50
     SNAPSHOT_INTERVAL: 1 #2
     DISCRIMINATOR_LR: 0.0002
     GENERATOR_LR: 0.0002
@@ -26,7 +26,7 @@ TRAIN:
         GAMMA1: 4.0  # 1,2,5 good 4 best  10&100bad
         GAMMA2: 5.0
         GAMMA3: 10.0  # 10good 1&100bad
-        LAMBDA: 5.0 # new generator loss factor
+        LAMBDA: 45.0     # 5.0 for mse
 
 
 GAN:

@@ -170,7 +170,7 @@ class ImageCaption:
         self.model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base").to("cuda")
 
         # Load the fine-tuned model checkpoint
-        checkpoint = torch.load("D:/Study/fourthYear_second/FYP/using detectron 2/output/BLIP/_BLIP_epoch_1_batch_160.pth")
+        checkpoint = torch.load("../output/BLIP_Result/best_lr = 1e-6, epoch =1,batch =8/_BLIP_epoch_1_batch_400.pth")
         # print(checkpoint['model_state_dict'])
         self.model.load_state_dict(checkpoint['model_state_dict'])
 
@@ -617,9 +617,9 @@ class GET_IMAGE_G(nn.Module):
 class G_NET(nn.Module):
     def __init__(self):
         super(G_NET, self).__init__()
-        ngf = cfg.GAN.GF_DIM # 32
-        nef = cfg.TEXT.EMBEDDING_DIM
-        ncf = cfg.GAN.CONDITION_DIM
+        ngf = cfg.GAN.GF_DIM # 32, number of feature maps
+        nef = cfg.TEXT.EMBEDDING_DIM # 768
+        ncf = cfg.GAN.CONDITION_DIM # 100, used to generate the random sample in the ca_net
         self.ca_net = CA_NET()
 
 

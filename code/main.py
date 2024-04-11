@@ -32,55 +32,55 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-# just for generating customized captions
-# def gen_example(wordtoix, algo):
-#     '''generate images from example sentences'''
-#     from nltk.tokenize import RegexpTokenizer
-#     filepath = '%s/example_filenames.txt' % (cfg.DATA_DIR)
-#     data_dic = {}
-#     with open(filepath, "r") as f:
-#         filenames = f.read().split('\n')
-#         for name in filenames:
-#             if len(name) == 0:
-#                 continue
-#             filepath = '%s/%s.txt' % (cfg.DATA_DIR, name)
-#             with open(filepath, "r") as f:
-#                 print('Load from:', name)
-#                 sentences = f.read().split('\n')
-#                 # a list of indices for a sentence
-#                 captions = []
-#                 cap_lens = []
-#                 for sent in sentences:
-#                     if len(sent) == 0:
-#                         continue
-#                     sent = sent.replace("\ufffd\ufffd", " ")
-#                     tokenizer = RegexpTokenizer(r'\w+')
-#                     tokens = tokenizer.tokenize(sent.lower())
-#                     if len(tokens) == 0:
-#                         print('sent', sent)
-#                         continue
-#
-#                     rev = []
-#                     for t in tokens:
-#                         t = t.encode('ascii', 'ignore').decode('ascii')
-#                         if len(t) > 0 and t in wordtoix:
-#                             rev.append(wordtoix[t])
-#                     captions.append(rev)
-#                     cap_lens.append(len(rev))
-#             max_len = np.max(cap_lens)
-#
-#             sorted_indices = np.argsort(cap_lens)[::-1]
-#             cap_lens = np.asarray(cap_lens)
-#             cap_lens = cap_lens[sorted_indices]
-#             cap_array = np.zeros((len(captions), max_len), dtype='int64')
-#             for i in range(len(captions)):
-#                 idx = sorted_indices[i]
-#                 cap = captions[idx]
-#                 c_len = len(cap)
-#                 cap_array[i, :c_len] = cap
-#             key = name[(name.rfind('/') + 1):]
-#             data_dic[key] = [cap_array, cap_lens, sorted_indices]
-#     algo.gen_example(data_dic)
+
+def gen_example(wordtoix, algo):
+    '''generate images from example sentences'''
+    from nltk.tokenize import RegexpTokenizer
+    filepath = '%s/example_filenames.txt' % (cfg.DATA_DIR)
+    data_dic = {}
+    with open(filepath, "r") as f:
+        filenames = f.read().split('\n')
+        for name in filenames:
+            if len(name) == 0:
+                continue
+            filepath = '%s/%s.txt' % (cfg.DATA_DIR, name)
+            with open(filepath, "r") as f:
+                print('Load from:', name)
+                sentences = f.read().split('\n')
+                # a list of indices for a sentence
+                captions = []
+                cap_lens = []
+                for sent in sentences:
+                    if len(sent) == 0:
+                        continue
+                    sent = sent.replace("\ufffd\ufffd", " ")
+                    tokenizer = RegexpTokenizer(r'\w+')
+                    tokens = tokenizer.tokenize(sent.lower())
+                    if len(tokens) == 0:
+                        print('sent', sent)
+                        continue
+
+                    rev = []
+                    for t in tokens:
+                        t = t.encode('ascii', 'ignore').decode('ascii')
+                        if len(t) > 0 and t in wordtoix:
+                            rev.append(wordtoix[t])
+                    captions.append(rev)
+                    cap_lens.append(len(rev))
+            max_len = np.max(cap_lens)
+
+            sorted_indices = np.argsort(cap_lens)[::-1]
+            cap_lens = np.asarray(cap_lens)
+            cap_lens = cap_lens[sorted_indices]
+            cap_array = np.zeros((len(captions), max_len), dtype='int64')
+            for i in range(len(captions)):
+                idx = sorted_indices[i]
+                cap = captions[idx]
+                c_len = len(cap)
+                cap_array[i, :c_len] = cap
+            key = name[(name.rfind('/') + 1):]
+            data_dic[key] = [cap_array, cap_lens, sorted_indices]
+    algo.gen_example(data_dic)
 
 
 if __name__ == "__main__":
@@ -98,7 +98,8 @@ if __name__ == "__main__":
     pprint.pprint(cfg)
 
     if not cfg.TRAIN.FLAG:
-        args.manualSeed = 100
+        args.manualSeed = 8899174 #100
+
     elif args.manualSeed is None:
         args.manualSeed = random.randint(1, 10000)
     random.seed(args.manualSeed)
@@ -141,8 +142,7 @@ if __name__ == "__main__":
         '''generate images from pre-extracted embeddings'''
         if cfg.B_VALIDATION:
             algo.sampling(split_dir)  # generate images for the whole valid dataset
-        # not now
-        # else:
-        #     gen_example(dataset.wordtoix, algo)  # generate images for customized captions
+        else:
+            gen_example(dataset.wordtoix, algo)  # generate images for customized captions
     end_t = time.time()
     print('Total time for training:', end_t - start_t)

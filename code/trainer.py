@@ -320,9 +320,6 @@ class condGANTrainer(object):
                         sentence=" ".join(sentence)
                         sentence_list.append(sentence)
 
-                    # print("Number of sentences in each batch:", len(sentence_list))
-                    # print(sentence_list)
-
                     # Modification
                     # # generate 'Doc' object represent the generated text embeddings using bert, supported now
                     # embs =  list(text_encoder.pipe(sentence_list))
@@ -369,6 +366,8 @@ class condGANTrainer(object):
                     #     print(sent_emb[7])
 
                     # print("######Finish using Bert to generate the words and sentence vectors of the current batch#####\n")
+                    attention_mask = tokenized_inputs['attention_mask'].cuda()
+                    real_cap_len = attention_mask.sum(dim=1) - 2  # exclude the cls and the sep
 
 
                 else:
@@ -377,7 +376,7 @@ class condGANTrainer(object):
                     # sent_emb: batch_size x nef
                     words_embs, sent_emb = text_encoder(captions, cap_lens, hidden) #RNN_ENCODER [14,256,12] [14,256]
 
-                # prevent gradients being calculated for these embeddings
+                # prevent gradients being calculated for these embeddings, freeze the text encoder
                 words_embs, sent_emb = words_embs.detach(), sent_emb.detach()
                 # identify padding parts of the text data
                 mask = (captions == 0)
@@ -386,7 +385,6 @@ class condGANTrainer(object):
 
                 if mask.size(1) > num_words:
                     mask = mask[:, :num_words]
-
                 #######################################################
                 # (2) Generate fake images
                 ######################################################
@@ -431,8 +429,7 @@ class condGANTrainer(object):
                         first_iteration = True
                     errG_total, G_logs = \
                         generator_loss_bert(netsD, image_caption, text_encoder, fake_imgs, real_labels,
-                                    words_embs, sent_emb, match_labels, cap_lens, class_ids,first_iteration)
-
+                                    words_embs, sent_emb, match_labels, cap_lens, class_ids,real_cap_len)
                     # print("###############Finish calculating generator loss#############")
 
                 else:
@@ -451,13 +448,13 @@ class condGANTrainer(object):
                 for p, avg_p in zip(netG.parameters(), avg_param_G):
                     avg_p.mul_(0.999).add_(0.001, p.data)
 
-                if gen_iterations % 20 == 0:
+                if gen_iterations % 100 == 0:
                     print(D_logs + '\n' + G_logs)
                 #
                 # print("###############Finish updating the generator#############")
 
                 # save images
-                if gen_iterations % 50 == 0:
+                if gen_iterations % self.num_batches == 0:
                     print("save model and image!")
 
                     now = datetime.datetime.now(dateutil.tz.tzlocal())
@@ -606,19 +603,36 @@ class condGANTrainer(object):
                         fullpath = '%s_s%d.png' % (s_tmp, k)
                         im.save(fullpath)
 
+
+
+
+
+
+
     def gen_example(self, data_dic):
         if cfg.TRAIN.NET_G == '':
             print('Error: the path for morels is not found!')
         else:
             # Build and load the generator
-            text_encoder = \
-                RNN_ENCODER(self.n_words, nhidden=cfg.TEXT.EMBEDDING_DIM)
-            state_dict = \
-                torch.load(cfg.TRAIN.NET_E, map_location=lambda storage, loc: storage)
-            text_encoder.load_state_dict(state_dict)
-            print('Load text encoder from:', cfg.TRAIN.NET_E)
-            text_encoder = text_encoder.cuda()
-            text_encoder.eval()
+            if cfg.TRAIN.USE_BERT:
+                print("Using trans-AttnGAN!!!!!!!!")
+                text_encoder = BertModel.from_pretrained("bert-base-uncased")
+                tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+                print('Load text encoder from:', cfg.TRAIN.NET_E)
+                text_encoder = text_encoder.cuda()
+                text_encoder.eval()
+
+
+
+            else:
+                text_encoder = \
+                    RNN_ENCODER(self.n_words, nhidden=cfg.TEXT.EMBEDDING_DIM)
+                state_dict = \
+                    torch.load(cfg.TRAIN.NET_E, map_location=lambda storage, loc: storage)
+                text_encoder.load_state_dict(state_dict)
+                print('Load text encoder from:', cfg.TRAIN.NET_E)
+                text_encoder = text_encoder.cuda()
+                text_encoder.eval()
 
             # the path to save generated images
             if cfg.GAN.B_DCGAN:
@@ -633,6 +647,8 @@ class condGANTrainer(object):
             print('Load G from: ', model_dir)
             netG.cuda()
             netG.eval()
+
+
             for key in data_dic:
                 save_dir = '%s/%s' % (s_tmp, key)
                 mkdir_p(save_dir)
@@ -641,6 +657,27 @@ class condGANTrainer(object):
                 batch_size = captions.shape[0]
                 nz = cfg.GAN.Z_DIM
 
+                # print(batch_size)
+                # print(key)
+                # print(data_dic[key])
+
+
+                if cfg.TRAIN.USE_BERT:
+                    sentence_list = []
+                    for i in range(batch_size):
+                        # cap = captions[i].data.cpu().numpy()
+                        cap= captions[i]
+                        sentence = []
+                        for j in range(len(cap)):
+                            if cap[j] == 0:
+                                break
+                            word = self.ixtoword[cap[j]].encode('ascii', 'ignore').decode('ascii')
+                            sentence.append(word)
+                        sentence=" ".join(sentence)
+                        sentence_list.append(sentence)
+                    print(sentence_list)
+
+
                 with torch.no_grad():
                     captions = Variable(torch.from_numpy(captions))
                     cap_lens = Variable(torch.from_numpy(cap_lens))
@@ -648,17 +685,50 @@ class condGANTrainer(object):
                     captions = captions.cuda()
                     cap_lens = cap_lens.cuda()
 
-                for i in range(1):  # 16
+                for i in range(100):  # 16
                     with torch.no_grad():
                         noise = Variable(torch.FloatTensor(batch_size, nz))
                         noise = noise.cuda()
                     #######################################################
                     # (1) Extract text embeddings
                     ######################################################
-                    hidden = text_encoder.init_hidden(batch_size)
-                    # words_embs: batch_size x nef x seq_len
-                    # sent_emb: batch_size x nef
-                    words_embs, sent_emb = text_encoder(captions, cap_lens, hidden)
+
+                    if cfg.TRAIN.USE_BERT:
+                        tokenized_inputs = tokenizer(
+                            sentence_list,
+                            padding=True,  # Pad to the longest sequence in the batch
+                            truncation=True,  # Truncate to max length of the model
+                            return_tensors='pt'  # Return PyTorch tensors
+                        )
+
+                        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                        # Move the tensors to the GPU
+                        tokenized_inputs = {key: value.to(device) for key, value in tokenized_inputs.items()}
+
+                        # Forward pass through the BERT model
+                        with torch.no_grad():
+                            outputs = text_encoder(**tokenized_inputs)
+
+                        last_hidden_states = outputs.last_hidden_state  # you should use only 1: length word features, excluding CLS
+
+                        # sentence feature vectors
+                        sent_emb = last_hidden_states[:, 0, :].cuda()  # Shape: (batch_size, hidden_size)
+
+                        words_embs = last_hidden_states[:, 1:,
+                                     :].cuda()  # Shape: (batch_size, sequence_length, hidden_size = 768)
+                        words_embs = words_embs.permute(0, 2,
+                                                        1)  # Shape: (batch_size, hidden_size = 768, sequence_length)
+                        # print(sent_emb)
+                        # print(words_embs)
+                        # print(sent_emb.shape)
+                        # print(words_embs.shape)
+
+                    else:
+                        hidden = text_encoder.init_hidden(batch_size)
+                        # words_embs: batch_size x nef x seq_len
+                        # sent_emb: batch_size x nef
+                        words_embs, sent_emb = text_encoder(captions, cap_lens, hidden)
+
                     mask = (captions == 0)
                     #######################################################
                     # (2) Generate fake images
@@ -696,3 +766,4 @@ class condGANTrainer(object):
                                 im = Image.fromarray(img_set)
                                 fullpath = '%s_a%d.png' % (save_name, k)
                                 im.save(fullpath)
+                return 0
